@@ -1,0 +1,119 @@
+{% extends 'base.html' %}
+{% block title %}{{ 'Editar' if producto else 'Nuevo' }} Producto – Tienda La Real{% endblock %}
+
+{% block content %}
+<div class="d-flex align-items-center gap-3 mb-4">
+    <a href="{{ url_for('inventario') }}" class="btn btn-sm btn-outline-secondary">
+        <i class="fas fa-arrow-left"></i>
+    </a>
+    <h1 class="page-title mb-0">{{ 'Editar Producto' if producto else 'Nuevo Producto' }}</h1>
+</div>
+
+<div class="row">
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-body">
+                <form method="post">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Nombre <span class="text-danger">*</span></label>
+                        <input type="text" name="nombre" class="form-control"
+                               value="{{ producto.nombre if producto else '' }}" required autofocus>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Descripción</label>
+                        <textarea name="descripcion" class="form-control" rows="2">{{ producto.descripcion if producto else '' }}</textarea>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label fw-semibold">Precio de Compra</label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input type="number" name="precio_compra" class="form-control" min="0" step="1"
+                                       value="{{ producto.precio_compra if producto else 0 }}">
+                            </div>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label fw-semibold">Precio de Venta <span class="text-danger">*</span></label>
+                            <div class="input-group">
+                                <span class="input-group-text">$</span>
+                                <input type="number" name="precio_venta" class="form-control" min="0" step="1"
+                                       value="{{ producto.precio_venta if producto else '' }}" required>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label fw-semibold">Stock Actual</label>
+                            <input type="number" name="stock" class="form-control" min="0"
+                                   value="{{ producto.stock if producto else 0 }}">
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label fw-semibold">Stock Mínimo</label>
+                            <input type="number" name="stock_minimo" class="form-control" min="0"
+                                   value="{{ producto.stock_minimo if producto else 5 }}">
+                            <div class="form-text">Alerta cuando el stock baje de este número</div>
+                        </div>
+                    </div>
+                    <div class="row">
+                        <div class="col-6 mb-3">
+                            <label class="form-label fw-semibold">Categoría</label>
+                            <select name="categoria_id" class="form-select">
+                                <option value="">Sin categoría</option>
+                                {% for c in categorias %}
+                                <option value="{{ c.id }}"
+                                    {% if producto and producto.categoria_id == c.id %}selected{% endif %}>
+                                    {{ c.nombre }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-6 mb-3">
+                            <label class="form-label fw-semibold">Código de Barras</label>
+                            <input type="text" name="codigo_barras" class="form-control"
+                                   value="{{ producto.codigo_barras if producto else '' }}"
+                                   placeholder="Opcional">
+                        </div>
+                    </div>
+
+                    {% if producto %}
+                    <div class="alert alert-info small mb-3">
+                        <i class="fas fa-info-circle me-1"></i>
+                        Creado el {{ producto.created_at[:10] if producto.created_at else '—' }}
+                    </div>
+                    {% endif %}
+
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-danger">
+                            <i class="fas fa-save me-2"></i>
+                            {{ 'Guardar Cambios' if producto else 'Crear Producto' }}
+                        </button>
+                        <a href="{{ url_for('inventario') }}" class="btn btn-outline-secondary">Cancelar</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    {% if producto %}
+    <div class="col-lg-5">
+        <div class="card">
+            <div class="card-header">Resumen</div>
+            <div class="card-body">
+                <dl class="row mb-0">
+                    <dt class="col-6 text-muted">Margen</dt>
+                    <dd class="col-6 fw-bold">
+                        {% if producto.precio_compra > 0 %}
+                            {{ "{:.1f}".format((producto.precio_venta - producto.precio_compra) / producto.precio_compra * 100) }}%
+                        {% else %}—{% endif %}
+                    </dd>
+                    <dt class="col-6 text-muted">Ganancia unit.</dt>
+                    <dd class="col-6">${{ "{:,.0f}".format(producto.precio_venta - producto.precio_compra) }}</dd>
+                    <dt class="col-6 text-muted">Valor en stock</dt>
+                    <dd class="col-6">${{ "{:,.0f}".format(producto.precio_venta * producto.stock) }}</dd>
+                </dl>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

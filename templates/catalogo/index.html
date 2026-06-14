@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Catálogo – {{ config.nombre }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/catalogo.css') }}">
+</head>
+<body>
+
+<!-- Header -->
+<header class="cat-header">
+    <div style="flex:1">
+        <h1>🛒 {{ config.nombre }}</h1>
+        <div class="sub">{{ config.ciudad }} · {{ config.horario }}</div>
+    </div>
+    <button class="cart-fab" onclick="openCart()">
+        🛍️ Carrito
+        <span class="cart-badge" id="cartBadge" style="display:none">0</span>
+    </button>
+</header>
+
+<!-- Search -->
+<div class="cat-search">
+    <input type="text" id="searchInput" placeholder="🔍  Buscar producto…" autocomplete="off">
+</div>
+
+<!-- Category pills -->
+<div class="cat-cats">
+    <span class="cat-pill active" onclick="filterCat('', this)">Todos</span>
+    {% for c in categorias %}
+    <span class="cat-pill" onclick="filterCat('{{ c.id }}', this)">{{ c.nombre }}</span>
+    {% endfor %}
+</div>
+
+<!-- Product Grid -->
+<div class="cat-grid" id="catGrid">
+    {% for p in productos %}
+    <div class="prod-card {% if p.stock <= 0 %}agotado{% endif %}"
+         data-name="{{ p.nombre|lower }}"
+         data-cat="{{ p.categoria_id or '' }}">
+
+        <div class="prod-img">
+            {% if p.categoria_nombre == 'Bebidas' %}🥤
+            {% elif p.categoria_nombre == 'Lacteos' %}🥛
+            {% elif p.categoria_nombre == 'Panaderia' %}🍞
+            {% elif p.categoria_nombre == 'Aseo' %}🧴
+            {% elif p.categoria_nombre in ('Granos y Secos', 'Granos') %}🌾
+            {% elif p.categoria_nombre == 'Snacks' %}🍿
+            {% elif p.categoria_nombre == 'Licores' %}🍺
+            {% else %}📦{% endif %}
+        </div>
+
+        <div class="prod-body">
+            <div class="prod-name">{{ p.nombre }}</div>
+            <div class="prod-price">${{ "{:,.0f}".format(p.precio_venta) }}</div>
+            <div class="prod-stock">
+                {% if p.stock <= 0 %}
+                    <span class="badge-out">Agotado</span>
+                {% elif p.stock <= 5 %}
+                    <span class="badge-low">Últimas {{ p.stock }} unidades</span>
+                {% else %}
+                    <span class="badge-ok">Disponible</span>
+                {% endif %}
+            </div>
+            <button class="btn-agregar"
+                    data-id="{{ p.id }}"
+                    {% if p.stock <= 0 %}disabled{% endif %}
+                    onclick="addToCart({{ p.id }}, '{{ p.nombre|replace("'", "\\'") }}', {{ p.precio_venta }}, {{ p.stock }})">
+                {% if p.stock <= 0 %}Agotado{% else %}Agregar{% endif %}
+            </button>
+        </div>
+    </div>
+    {% endfor %}
+    <div class="no-results" id="noResults" style="display:none">
+        😕 No encontramos ese producto
+    </div>
+</div>
+
+<!-- Cart Overlay -->
+<div class="cart-overlay" id="cartOverlay" onclick="closeCart()"></div>
+
+<!-- Cart Panel -->
+<div class="cart-panel" id="cartPanel">
+    <div class="cart-panel-header">
+        <span>🛍️</span>
+        <h3>Tu Pedido</h3>
+        <button class="cart-close-btn" onclick="closeCart()">✕</button>
+    </div>
+
+    <!-- Vista: Carrito -->
+    <div class="panel-view" id="viewCart">
+        <div class="cart-items-list" id="cartItemsList">
+            <div class="cart-empty-state">
+                <div style="font-size:40px;margin-bottom:8px">🛒</div>
+                <div>Tu carrito está vacío</div>
+                <small style="color:#bbb">Agrega productos para empezar</small>
+            </div>
+        </div>
+        <div class="cart-footer-panel">
+            <div class="total-row">
+                <span class="total-label">Total del pedido</span>
+                <span class="total-val" id="cartTotal">$0</span>
+            </div>
+            <button class="btn-checkout" id="btnCheckout" onclick="goCheckout()" disabled>
+                📋 Hacer Pedido
+            </button>
+        </div>
+    </div>
+
+    <!-- Vista: Checkout -->
+    <div class="panel-view hidden" id="viewCheckout">
+        <div class="checkout-form" id="checkoutForm">
+            <button class="btn-back" onclick="showView('cart')">
+                ← Volver al carrito
+            </button>
+
+            <!-- Resumen compacto -->
+            <div style="background:#f8f9ff;border-radius:10px;padding:12px;margin-bottom:16px">
+                <div style="font-size:11px;color:#888;text-transform:uppercase;margin-bottom:8px">Tu pedido</div>
+                <div id="resumenItems"></div>
+                <div style="display:flex;justify-content:space-between;font-weight:800;margin-top:8px;padding-top:8px;border-top:1px solid #eee">
+                    <span>TOTAL</span>
+                    <span style="color:#e94560" id="resumenTotal"></span>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>Tu nombre completo *</label>
+                <input type="text" id="fNombre" placeholder="Ej: María Pérez" required>
+            </div>
+            <div class="form-group">
+                <label>Número de WhatsApp *</label>
+                <input type="tel" id="fTelefono" placeholder="Ej: 3001234567" required>
+            </div>
+            <div class="form-group">
+                <label>Dirección de entrega</label>
+                <input type="text" id="fDireccion" placeholder="Ej: Calle 5 # 10-23, Barrio La Paz">
+            </div>
+            <div class="form-group">
+                <label>Notas adicionales</label>
+                <textarea id="fNotas" placeholder="Ej: Tocar el timbre, apartamento 201…"></textarea>
+            </div>
+        </div>
+
+        <div class="cart-footer-panel">
+            <button class="btn-wa" id="btnEnviar" onclick="enviarPedido(event)">
+                <svg viewBox="0 0 24 24"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.123.556 4.116 1.523 5.849L.057 23.882l6.198-1.424A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.818 9.818 0 01-5.01-1.373l-.36-.214-3.68.845.876-3.579-.235-.375A9.783 9.783 0 012.182 12C2.182 6.59 6.59 2.182 12 2.182S21.818 6.59 21.818 12 17.41 21.818 12 21.818z"/></svg>
+                Confirmar por WhatsApp
+            </button>
+        </div>
+    </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/catalogo.js') }}"></script>
+</body>
+</html>

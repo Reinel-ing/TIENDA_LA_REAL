@@ -1,0 +1,126 @@
+{% extends 'base.html' %}
+{% block title %}Punto de Venta – Tienda La Real{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="page-title">Punto de Venta</h1>
+    <span class="text-muted small"><kbd>F2</kbd> Buscar &nbsp; <kbd>F12</kbd> Cobrar &nbsp; <kbd>Esc</kbd> Limpiar</span>
+</div>
+
+<div class="pos-wrap">
+    <!-- Panel Productos -->
+    <div class="pos-products">
+        <div class="pos-search-bar">
+            <div class="input-group flex-grow-1" style="max-width:320px">
+                <span class="input-group-text bg-white"><i class="fas fa-search text-muted"></i></span>
+                <input type="text" id="searchInput" class="form-control border-start-0"
+                       placeholder="Buscar por nombre o código de barras…" autocomplete="off">
+            </div>
+        </div>
+        <div class="cat-pills">
+            <span class="cat-pill active" onclick="filterCat('', this)">Todos</span>
+            {% for c in categorias %}
+            <span class="cat-pill" onclick="filterCat('{{ c.id }}', this)">{{ c.nombre }}</span>
+            {% endfor %}
+        </div>
+        <div id="productGrid" class="product-grid">
+            <div class="no-results"><i class="fas fa-spinner fa-spin"></i> Cargando productos…</div>
+        </div>
+    </div>
+
+    <!-- Panel Carrito -->
+    <div class="pos-cart">
+        <div class="cart-header">
+            <span><i class="fas fa-shopping-cart me-2 text-muted"></i>Carrito <span id="cartCount" class="badge bg-danger rounded-pill ms-1">0</span></span>
+            <button class="btn btn-sm btn-outline-secondary" onclick="clearCart()">
+                <i class="fas fa-trash me-1"></i>Vaciar
+            </button>
+        </div>
+
+        <!-- Cliente -->
+        <div class="px-3 py-2 border-bottom">
+            <select id="clienteId" class="form-select form-select-sm">
+                <option value="">👤 Cliente General</option>
+                {% for c in clientes %}
+                <option value="{{ c.id }}">{{ c.nombre }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <!-- Items -->
+        <div class="cart-items" id="cartItems">
+            <div class="cart-empty">
+                <i class="fas fa-shopping-cart fa-2x mb-2"></i><br>
+                Carrito vacío<br>
+                <small>Haz clic en un producto para agregarlo</small>
+            </div>
+        </div>
+
+        <!-- Footer / Pago -->
+        <div class="cart-footer">
+            <div class="d-flex justify-content-between align-items-baseline mb-2">
+                <span class="total-label">TOTAL</span>
+                <span class="total-line" id="totalAmount">$0</span>
+            </div>
+
+            <div class="mb-2">
+                <label class="form-label mb-1 small fw-semibold">Forma de pago</label>
+                <select id="tipoPago" class="form-select form-select-sm">
+                    <option value="efectivo">💵 Efectivo</option>
+                    <option value="transferencia">📲 Transferencia / Nequi</option>
+                    <option value="tarjeta">💳 Tarjeta</option>
+                </select>
+            </div>
+
+            <div id="efectivoBlock" class="mb-2">
+                <label class="form-label mb-1 small fw-semibold">Recibido</label>
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text">$</span>
+                    <input type="number" id="montoRecibido" class="form-control" min="0" step="1000" placeholder="0">
+                </div>
+                <div class="mt-1 small">
+                    Cambio: <span id="cambioAmount" class="fw-bold">—</span>
+                </div>
+            </div>
+
+            <button id="btnCobrar" class="btn btn-danger w-100 btn-lg mt-1" onclick="finalizarVenta()">
+                <i class="fas fa-check me-2"></i>Cobrar
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Recibo -->
+<div class="modal fade" id="reciboModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="fas fa-check-circle me-2"></i>Venta Exitosa</h5>
+            </div>
+            <div class="modal-body text-center">
+                <div class="text-muted small mb-1">Venta</div>
+                <div class="fs-4 fw-bold mb-3" id="r-id"></div>
+                <table class="table table-sm text-start">
+                    <tr><td class="text-muted">Total</td><td class="fw-bold text-end" id="r-total"></td></tr>
+                    <tr><td class="text-muted">Pago</td><td class="text-end" id="r-pago"></td></tr>
+                    <tr><td class="text-muted">Recibido</td><td class="text-end" id="r-rec"></td></tr>
+                    <tr><td class="text-muted">Cambio</td><td class="fw-bold text-success text-end" id="r-cam"></td></tr>
+                    <tr><td class="text-muted">Fecha</td><td class="text-end small" id="r-fecha"></td></tr>
+                </table>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-outline-secondary btn-sm" onclick="window.print()">
+                    <i class="fas fa-print me-1"></i>Imprimir
+                </button>
+                <button class="btn btn-success btn-sm" data-bs-dismiss="modal">
+                    Nueva Venta
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/pos.js') }}"></script>
+{% endblock %}

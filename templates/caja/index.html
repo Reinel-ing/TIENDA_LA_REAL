@@ -1,0 +1,207 @@
+{% extends 'base.html' %}
+{% block title %}Caja – Tienda La Real{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="page-title">Caja</h1>
+    {% if not caja %}
+    <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalAbrir">
+        <i class="fas fa-lock-open me-2"></i>Abrir Caja
+    </button>
+    {% else %}
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-primary" data-bs-toggle="modal" data-bs-target="#modalMovimiento">
+            <i class="fas fa-plus-minus me-2"></i>Registrar Movimiento
+        </button>
+        <button class="btn btn-danger" data-bs-toggle="modal" data-bs-target="#modalCerrar">
+            <i class="fas fa-lock me-2"></i>Cerrar Caja
+        </button>
+    </div>
+    {% endif %}
+</div>
+
+{% if not caja %}
+<!-- Caja cerrada -->
+<div class="row justify-content-center">
+    <div class="col-md-5">
+        <div class="card text-center py-5">
+            <div class="card-body">
+                <i class="fas fa-lock fa-3x text-muted mb-3"></i>
+                <h5>La caja está cerrada</h5>
+                <p class="text-muted">Abre la caja para comenzar a registrar ventas del día.</p>
+                <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#modalAbrir">
+                    <i class="fas fa-lock-open me-2"></i>Abrir Caja
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% else %}
+<!-- Caja abierta -->
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <div class="text-muted small">Apertura</div>
+                <div class="fs-4 fw-bold">${{ "{:,.0f}".format(caja.monto_apertura) }}</div>
+                <small class="text-muted">{{ caja.fecha_apertura[:16] if caja.fecha_apertura else '' }}</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <div class="text-muted small">Total Entradas</div>
+                <div class="fs-4 fw-bold text-success">${{ "{:,.0f}".format(total_entradas) }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <div class="text-muted small">Total Salidas</div>
+                <div class="fs-4 fw-bold text-danger">${{ "{:,.0f}".format(total_salidas) }}</div>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card stat-card">
+            <div class="card-body">
+                <div class="text-muted small">Saldo en Caja</div>
+                <div class="fs-4 fw-bold">${{ "{:,.0f}".format(caja.monto_apertura + total_entradas - total_salidas) }}</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="card">
+    <div class="card-header">
+        <i class="fas fa-list me-2 text-muted"></i>Movimientos del día
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th class="ps-3">Hora</th>
+                    <th>Tipo</th>
+                    <th>Concepto</th>
+                    <th class="pe-3 text-end">Monto</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in movimientos %}
+                <tr>
+                    <td class="ps-3 text-muted small">{{ m.created_at[11:16] if m.created_at else '' }}</td>
+                    <td>
+                        <span class="badge {{ 'bg-success' if m.tipo == 'entrada' else 'bg-danger' }}">
+                            {{ m.tipo }}
+                        </span>
+                    </td>
+                    <td>{{ m.concepto or '—' }}</td>
+                    <td class="pe-3 text-end fw-semibold {{ 'text-success' if m.tipo == 'entrada' else 'text-danger' }}">
+                        {{ '+' if m.tipo == 'entrada' else '-' }}${{ "{:,.0f}".format(m.monto) }}
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td colspan="4" class="text-center text-muted py-3">Sin movimientos manuales aún</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- Modal Abrir Caja -->
+<div class="modal fade" id="modalAbrir" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="fas fa-lock-open me-2"></i>Abrir Caja</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{{ url_for('caja_abrir') }}">
+                <div class="modal-body">
+                    <label class="form-label fw-semibold">Monto inicial en efectivo</label>
+                    <div class="input-group">
+                        <span class="input-group-text">$</span>
+                        <input type="number" name="monto_apertura" class="form-control" min="0" step="1000" value="0" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-success">Abrir Caja</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Movimiento -->
+{% if caja %}
+<div class="modal fade" id="modalMovimiento" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Registrar Movimiento</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{{ url_for('caja_movimiento', caja_id=caja.id) }}">
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Tipo</label>
+                        <select name="tipo" class="form-select" required>
+                            <option value="entrada">Entrada (ingreso de efectivo)</option>
+                            <option value="salida">Salida (retiro / gasto)</option>
+                        </select>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Monto</label>
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            <input type="number" name="monto" class="form-control" min="1" step="1000" required>
+                        </div>
+                    </div>
+                    <div class="mb-1">
+                        <label class="form-label fw-semibold">Concepto</label>
+                        <input type="text" name="concepto" class="form-control" placeholder="Ej: pago proveedor, retiro…">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-primary">Registrar</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Cerrar Caja -->
+<div class="modal fade" id="modalCerrar" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="fas fa-lock me-2"></i>Cerrar Caja</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{{ url_for('caja_cerrar', id=caja.id) }}">
+                <div class="modal-body">
+                    <p class="text-muted small">Ingresa el monto físico contado en caja al cierre.</p>
+                    <label class="form-label fw-semibold">Monto contado</label>
+                    <div class="input-group">
+                        <span class="input-group-text">$</span>
+                        <input type="number" name="monto_cierre" class="form-control" min="0" step="1000" value="0" required>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancelar</button>
+                    <button type="submit" class="btn btn-danger">Cerrar Caja</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}
