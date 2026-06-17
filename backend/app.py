@@ -1,6 +1,10 @@
 from flask import Flask, jsonify, request, send_from_directory
-from flask_cors import CORS
 from database import init_db, get_db
+try:
+    from flask_cors import CORS
+    _has_cors = True
+except ImportError:
+    _has_cors = False
 from datetime import datetime, date
 import urllib.parse
 import os
@@ -17,10 +21,19 @@ TIENDA_CONFIG = {
 }
 # =====================================================
 
-DIST = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'dist')
-app = Flask(__name__, static_folder=DIST, static_url_path='')
+_here = os.path.dirname(os.path.abspath(__file__))
+_parent_dist = os.path.join(_here, '..', 'frontend', 'dist')
+_local_dist = os.path.join(_here, 'frontend', 'dist')
+DIST = os.environ.get('DIST_PATH',
+    _parent_dist if os.path.isdir(_parent_dist) else _local_dist)
+app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'tienda_la_real_2024')
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+if _has_cors:
+    CORS(app, resources={r"/api/*": {"origins": "*"}})
+
+# Auto-initialize DB tables on startup
+with app.app_context():
+    init_db()
 
 
 # ── Servir React SPA ──────────────────────────────────────────────────────────
@@ -38,6 +51,25 @@ def serve_react(path):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def rows(cur): return [dict(r) for r in cur.fetchall()]
 def row(cur):  r = cur.fetchone(); return dict(r) if r else None
+
+
+# ── Setup (one-time seed) ────────────────────────────────────────────────────
+@app.route('/api/setup-seed')
+def api_setup_seed():
+    key = request.args.get('key', '')
+    if key != 'tienda-setup-2024':
+        return jsonify({'error': 'forbidden'}), 403
+    import importlib.util, sys, io, contextlib
+    seed_path = os.path.join(os.path.dirname(__file__), 'seed.py')
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            spec = importlib.util.spec_from_file_location('seed', seed_path)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+        return jsonify({'ok': True, 'output': buf.getvalue()[-1000:]})
+    except Exception as e:
+        return jsonify({'ok': False, 'error': str(e), 'output': buf.getvalue()[-500:]})
 
 
 # ── Config ────────────────────────────────────────────────────────────────────
