@@ -98,6 +98,15 @@ def init_db():
         );
     """)
 
+    # Migración: columnas de pago (no falla si ya existen)
+    for col_sql in [
+        "ALTER TABLE pedidos ADD COLUMN comprobante_b64 TEXT DEFAULT ''",
+        "ALTER TABLE pedidos ADD COLUMN pago_verificado INTEGER DEFAULT 0",
+    ]:
+        try: conn.execute(col_sql)
+        except: pass
+    conn.commit()
+
     if not conn.execute("SELECT COUNT(*) FROM categorias").fetchone()[0]:
         conn.executescript("""
             INSERT INTO categorias (nombre) VALUES

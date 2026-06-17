@@ -13,11 +13,15 @@ import os
 # CONFIGURACION DE LA TIENDA  ← EDITA AQUI
 # =====================================================
 TIENDA_CONFIG = {
-    'nombre':    'Tienda La Real',
-    'whatsapp':  '573000000000',
-    'ciudad':    'Tu Ciudad',
-    'direccion': 'Tu Dirección',
-    'horario':   'Lun–Sáb 7am–9pm',
+    'nombre':      'Tienda La Real',
+    'whatsapp':    '573000000000',
+    'ciudad':      'Tu Ciudad',
+    'direccion':   'Tu Dirección',
+    'horario':     'Lun–Sáb 7am–9pm',
+    # Métodos de pago digital (cambia los números por los tuyos)
+    'nequi':       '573000000000',
+    'daviplata':   '573000000000',
+    'bancolombia': '',   # número de cuenta opcional, dejar '' para ocultar
 }
 # =====================================================
 
@@ -51,6 +55,17 @@ def serve_react(path):
 # ── Helpers ───────────────────────────────────────────────────────────────────
 def rows(cur): return [dict(r) for r in cur.fetchall()]
 def row(cur):  r = cur.fetchone(); return dict(r) if r else None
+
+def _pago_msg():
+    lines = ["💳 *Formas de pago:*"]
+    if TIENDA_CONFIG.get('nequi'):
+        lines.append(f"📱 Nequi: {TIENDA_CONFIG['nequi']}")
+    if TIENDA_CONFIG.get('daviplata'):
+        lines.append(f"📱 Daviplata: {TIENDA_CONFIG['daviplata']}")
+    if TIENDA_CONFIG.get('bancolombia'):
+        lines.append(f"🏦 Bancolombia: {TIENDA_CONFIG['bancolombia']}")
+    lines.append("💵 Efectivo contra entrega")
+    return '\n'.join(lines)
 
 
 # ── Setup (one-time seed) ────────────────────────────────────────────────────
@@ -437,12 +452,13 @@ def api_catalogo_pedido():
         pedido_db = row(db.execute("SELECT * FROM pedidos WHERE id=?", (pid,)))
         items_db  = rows(db.execute("SELECT dp.*,p.nombre as producto_nombre FROM detalle_pedidos dp JOIN productos p ON dp.producto_id=p.id WHERE dp.pedido_id=?", (pid,)))
         lineas = '\n'.join([f"• {i['producto_nombre']} x{i['cantidad']} = ${i['subtotal']:,.0f}" for i in items_db])
-        msg = (f"Hola *{TIENDA_CONFIG['nombre']}*! 🛒\n\nQuiero hacer este pedido:\n\n"
+        pago_lines = _pago_msg()
+        msg = (f"Hola *{TIENDA_CONFIG['nombre']}*! 🛒\n\nQuiero confirmar mi pedido:\n\n"
                f"*Pedido #{pid}*\n{lineas}\n\n💰 *TOTAL: ${data['total']:,.0f}*\n\n"
                f"📋 *Mis datos:*\nNombre: {data['nombre']}\nTel: {data['telefono']}\n"
                + (f"Dirección: {data.get('direccion','')}\n" if data.get('direccion') else "")
                + (f"Notas: {data.get('notas','')}\n" if data.get('notas') else "")
-               + "\n_Confirmen disponibilidad por favor_ 🙏")
+               + f"\n{pago_lines}\n\n_Ahora voy a enviar el comprobante de pago_ 📸")
         wa_link = f"https://wa.me/{TIENDA_CONFIG['whatsapp']}?text={urllib.parse.quote(msg)}"
 
         db.close()
@@ -461,12 +477,13 @@ def api_catalogo_pedido_detalle(id):
         db.close(); return jsonify({'error': 'No encontrado'}), 404
 
     lineas = '\n'.join([f"• {i['producto_nombre']} x{i['cantidad']} = ${i['subtotal']:,.0f}" for i in items])
-    msg = (f"Hola *{TIENDA_CONFIG['nombre']}*! 🛒\n\nQuiero hacer este pedido:\n\n"
+    pago_lines = _pago_msg()
+    msg = (f"Hola *{TIENDA_CONFIG['nombre']}*! 🛒\n\nQuiero confirmar mi pedido:\n\n"
            f"*Pedido #{id}*\n{lineas}\n\n💰 *TOTAL: ${pedido['total']:,.0f}*\n\n"
            f"📋 *Mis datos:*\nNombre: {pedido['cliente_nombre']}\nTel: {pedido['cliente_telefono']}\n"
            + (f"Dirección: {pedido['cliente_direccion']}\n" if pedido.get('cliente_direccion') else "")
            + (f"Notas: {pedido['notas']}\n" if pedido.get('notas') else "")
-           + "\n_Confirmen disponibilidad por favor_ 🙏")
+           + f"\n{pago_lines}\n\n_Ahora voy a enviar el comprobante de pago_ 📸")
     wa_link = f"https://wa.me/{TIENDA_CONFIG['whatsapp']}?text={urllib.parse.quote(msg)}"
 
     db.close()
@@ -479,7 +496,10 @@ def api_pedidos():
     db = get_db()
     estado = request.args.get('estado', 'pendiente')
     lista  = rows(db.execute("""
-        SELECT p.*, COUNT(dp.id) as num_items
+        SELECT p.id, p.cliente_nombre, p.cliente_telefono, p.cliente_direccion,
+               p.total, p.estado, p.notas, p.created_at, p.pago_verificado,
+               CASE WHEN p.comprobante_b64 != '' AND p.comprobante_b64 IS NOT NULL THEN 1 ELSE 0 END as tiene_comprobante,
+               COUNT(dp.id) as num_items
         FROM pedidos p LEFT JOIN detalle_pedidos dp ON p.id=dp.pedido_id
         WHERE p.estado=? GROUP BY p.id ORDER BY p.created_at DESC
     """, (estado,)))
@@ -532,6 +552,33 @@ def api_pedido_cancelar(id):
     db.execute("UPDATE pedidos SET estado='cancelado' WHERE id=?", (id,))
     db.commit(); db.close()
     return jsonify({'success': True})
+
+@app.route('/api/pedidos/<int:id>/comprobante', methods=['POST'])
+def api_pedido_comprobante(id):
+    data = request.get_json()
+    b64 = data.get('imagen', '')
+    if not b64 or not b64.startswith('data:image'):
+        return jsonify({'error': 'Imagen inválida'}), 400
+    db = get_db()
+    db.execute("UPDATE pedidos SET comprobante_b64=? WHERE id=?", (b64, id))
+    db.commit(); db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/pedidos/<int:id>/verificar-pago', methods=['POST'])
+def api_pedido_verificar_pago(id):
+    db = get_db()
+    db.execute("UPDATE pedidos SET pago_verificado=1 WHERE id=?", (id,))
+    db.commit(); db.close()
+    return jsonify({'success': True})
+
+@app.route('/api/pedidos/<int:id>/comprobante-img')
+def api_pedido_comprobante_img(id):
+    db = get_db()
+    pedido = row(db.execute("SELECT comprobante_b64 FROM pedidos WHERE id=?", (id,)))
+    db.close()
+    if not pedido or not pedido.get('comprobante_b64'):
+        return jsonify({'error': 'No hay comprobante'}), 404
+    return jsonify({'imagen': pedido['comprobante_b64']})
 
 @app.route('/api/factura/<int:id>')
 def api_factura(id):
