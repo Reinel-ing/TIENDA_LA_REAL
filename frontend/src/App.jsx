@@ -9,6 +9,7 @@ import Clientes from './pages/Clientes'
 import Caja from './pages/Caja'
 import Reportes from './pages/Reportes'
 import Pedidos from './pages/Pedidos'
+import Transferencias from './pages/Transferencias'
 import Catalogo from './pages/Catalogo'
 import CatalogoConfirmado from './pages/CatalogoConfirmado'
 import Factura from './pages/Factura'
@@ -33,6 +34,7 @@ export default function App() {
           <Route path="/caja" element={<Caja />} />
           <Route path="/reportes" element={<Reportes />} />
           <Route path="/pedidos" element={<Pedidos />} />
+          <Route path="/transferencias" element={<Transferencias />} />
         </Route>
       </Routes>
     </BrowserRouter>

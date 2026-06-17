@@ -580,6 +580,61 @@ def api_pedido_comprobante_img(id):
         return jsonify({'error': 'No hay comprobante'}), 404
     return jsonify({'imagen': pedido['comprobante_b64']})
 
+@app.route('/api/transferencias')
+def api_transferencias():
+    db = get_db()
+    fecha_ini = request.args.get('desde', '')
+    fecha_fin = request.args.get('hasta', '')
+
+    # Ventas del POS pagadas por medios digitales
+    where_v = "WHERE v.tipo_pago != 'efectivo'"
+    params_v = []
+    if fecha_ini: where_v += " AND DATE(v.created_at) >= ?"; params_v.append(fecha_ini)
+    if fecha_fin: where_v += " AND DATE(v.created_at) <= ?"; params_v.append(fecha_fin)
+
+    ventas_dig = rows(db.execute(f"""
+        SELECT v.id, v.total, v.tipo_pago, v.created_at,
+               COALESCE(c.nombre,'—') as cliente,
+               COUNT(dv.id) as num_items, 'venta' as origen
+        FROM ventas v
+        LEFT JOIN clientes c ON v.cliente_id = c.id
+        LEFT JOIN detalle_ventas dv ON v.id = dv.venta_id
+        {where_v}
+        GROUP BY v.id ORDER BY v.created_at DESC
+    """, params_v))
+
+    # Pedidos WhatsApp confirmados con comprobante
+    where_p = "WHERE p.estado != 'cancelado' AND p.comprobante_b64 != '' AND p.comprobante_b64 IS NOT NULL"
+    params_p = []
+    if fecha_ini: where_p += " AND DATE(p.created_at) >= ?"; params_p.append(fecha_ini)
+    if fecha_fin: where_p += " AND DATE(p.created_at) <= ?"; params_p.append(fecha_fin)
+
+    pedidos_dig = rows(db.execute(f"""
+        SELECT p.id, p.total, 'whatsapp' as tipo_pago, p.created_at,
+               p.cliente_nombre as cliente, p.pago_verificado,
+               COUNT(dp.id) as num_items, 'pedido' as origen
+        FROM pedidos p
+        LEFT JOIN detalle_pedidos dp ON p.id = dp.pedido_id
+        {where_p}
+        GROUP BY p.id ORDER BY p.created_at DESC
+    """, params_p))
+
+    # Totales por método
+    todos = ventas_dig + pedidos_dig
+    resumen = {}
+    for t in todos:
+        m = t['tipo_pago']
+        resumen[m] = resumen.get(m, 0) + t['total']
+
+    db.close()
+    return jsonify({
+        'ventas': ventas_dig,
+        'pedidos': pedidos_dig,
+        'resumen': resumen,
+        'gran_total': sum(resumen.values()),
+    })
+
+
 @app.route('/api/factura/<int:id>')
 def api_factura(id):
     db     = get_db()

@@ -10,6 +10,7 @@ const nav = [
   { section: 'Operaciones' },
   { to: '/caja', icon: 'fa-sack-dollar', label: 'Caja' },
   { to: '/pedidos', icon: 'fa-bag-shopping', label: 'Pedidos WhatsApp' },
+  { to: '/transferencias', icon: 'fa-money-bill-transfer', label: 'Transferencias' },
   { to: '/ventas/historial', icon: 'fa-clock-rotate-left', label: 'Historial' },
   { to: '/reportes', icon: 'fa-chart-line', label: 'Reportes' },
   { section: 'Público' },
