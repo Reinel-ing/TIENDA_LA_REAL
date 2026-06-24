@@ -2,12 +2,16 @@ import { useEffect, useState } from 'react'
 import { Bar, Doughnut } from 'react-chartjs-2'
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend } from 'chart.js'
 import api, { cop } from '../api'
+import useAutoRefresh from '../hooks/useAutoRefresh'
+import LiveBadge from '../components/LiveBadge'
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Tooltip, Legend)
 
 export default function Reportes() {
   const [data, setData] = useState(null)
-  useEffect(() => { api.get('/reportes').then(r => setData(r.data)) }, [])
+  const load = () => api.get('/reportes').then(r => setData(r.data))
+  useEffect(() => { load() }, [])
+  const lastUpdated = useAutoRefresh(load, 60000)
 
   if (!data) return <div className="page-body"><p>Cargando...</p></div>
 
@@ -32,6 +36,7 @@ export default function Reportes() {
     <>
       <div className="topbar">
         <h4><i className="fa-solid fa-chart-line me-2" />Reportes</h4>
+        <LiveBadge lastUpdated={lastUpdated} />
       </div>
       <div className="page-body">
         {/* Stats hoy / mes */}

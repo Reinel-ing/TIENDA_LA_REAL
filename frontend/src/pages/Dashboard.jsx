@@ -1,10 +1,14 @@
 import { useEffect, useState } from 'react'
 import api, { cop } from '../api'
+import useAutoRefresh from '../hooks/useAutoRefresh'
+import LiveBadge from '../components/LiveBadge'
 
 export default function Dashboard() {
   const [data, setData] = useState(null)
 
-  useEffect(() => { api.get('/dashboard').then(r => setData(r.data)) }, [])
+  const load = () => api.get('/dashboard').then(r => setData(r.data))
+  useEffect(() => { load() }, [])
+  const lastUpdated = useAutoRefresh(load, 20000)
 
   if (!data) return <div className="page-body"><p>Cargando...</p></div>
 
@@ -20,7 +24,7 @@ export default function Dashboard() {
     <>
       <div className="topbar">
         <h4><i className="fa-solid fa-gauge-high me-2" />Dashboard</h4>
-        <small className="text-muted">{new Date().toLocaleDateString('es-CO', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</small>
+        <LiveBadge lastUpdated={lastUpdated} />
       </div>
       <div className="page-body">
         <div className="row g-3 mb-4">

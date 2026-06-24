@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import api, { cop } from '../api'
+import useAutoRefresh from '../hooks/useAutoRefresh'
+import LiveBadge from '../components/LiveBadge'
 
 export default function Caja() {
   const [data, setData] = useState(null)
@@ -9,6 +11,7 @@ export default function Caja() {
 
   const load = () => api.get('/caja').then(r => setData(r.data))
   useEffect(() => { load() }, [])
+  const lastUpdated = useAutoRefresh(load, 30000)
 
   const abrir = async e => {
     e.preventDefault()
@@ -37,7 +40,10 @@ export default function Caja() {
     <>
       <div className="topbar">
         <h4><i className="fa-solid fa-sack-dollar me-2" />Caja</h4>
-        {caja && <span className="badge bg-success">Abierta</span>}
+        <div className="d-flex gap-2 align-items-center">
+          {caja && <span className="badge bg-success">Abierta</span>}
+          <LiveBadge lastUpdated={lastUpdated} />
+        </div>
       </div>
       <div className="page-body">
         {!caja ? (

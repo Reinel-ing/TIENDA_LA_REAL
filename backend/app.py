@@ -8,22 +8,37 @@ except ImportError:
 from datetime import datetime, date
 import urllib.parse
 import os
+import hmac as _hmac, hashlib as _hashlib, time as _time
 
-# =====================================================
-# CONFIGURACION DE LA TIENDA  ← EDITA AQUI
-# =====================================================
-TIENDA_CONFIG = {
-    'nombre':      'Tienda La Real',
-    'whatsapp':    '573000000000',
-    'ciudad':      'Tu Ciudad',
-    'direccion':   'Tu Dirección',
-    'horario':     'Lun–Sáb 7am–9pm',
-    # Métodos de pago digital (cambia los números por los tuyos)
-    'nequi':       '573000000000',
-    'daviplata':   '573000000000',
-    'bancolombia': '',   # número de cuenta opcional, dejar '' para ocultar
+# Valores por defecto (se sobreescriben con los guardados en la DB)
+_CONFIG_DEFAULTS = {
+    'nombre':         'Tienda La Real',
+    'whatsapp':       '',
+    'ciudad':         '',
+    'direccion':      '',
+    'horario':        'Lun–Sáb 7am–9pm',
+    'nequi':          '',
+    'daviplata':      '',
+    'bancolombia':    '',
+    'url_tienda':     'https://tiendalarealco.pythonanywhere.com',
+    'admin_password': 'admin123',
+    'bono_activo':    '1',
+    'bono_porcentaje':'10',
+    'bono_texto':     '¡Bono de bienvenida! Descuento aplicado automáticamente en tu primera compra.',
+    'domicilio_activo': '1',
+    'domicilio_costo':  '1000',
 }
-# =====================================================
+
+def get_config():
+    db = get_db()
+    filas = db.execute("SELECT clave, valor FROM configuracion").fetchall()
+    db.close()
+    cfg = dict(_CONFIG_DEFAULTS)
+    cfg.update({r['clave']: r['valor'] for r in filas})
+    return cfg
+
+# Alias global (se recarga en cada request via get_config())
+TIENDA_CONFIG = _CONFIG_DEFAULTS
 
 _here = os.path.dirname(os.path.abspath(__file__))
 _parent_dist = os.path.join(_here, '..', 'frontend', 'dist')
@@ -56,16 +71,54 @@ def serve_react(path):
 def rows(cur): return [dict(r) for r in cur.fetchall()]
 def row(cur):  r = cur.fetchone(); return dict(r) if r else None
 
-def _pago_msg():
-    lines = ["💳 *Formas de pago:*"]
-    if TIENDA_CONFIG.get('nequi'):
-        lines.append(f"📱 Nequi: {TIENDA_CONFIG['nequi']}")
-    if TIENDA_CONFIG.get('daviplata'):
-        lines.append(f"📱 Daviplata: {TIENDA_CONFIG['daviplata']}")
-    if TIENDA_CONFIG.get('bancolombia'):
-        lines.append(f"🏦 Bancolombia: {TIENDA_CONFIG['bancolombia']}")
-    lines.append("💵 Efectivo contra entrega")
-    return '\n'.join(lines)
+_PAGO_LABELS = {
+    'nequi':       ('📱', 'Nequi'),
+    'daviplata':   ('📱', 'Daviplata'),
+    'bancolombia': ('🏦', 'Bancolombia'),
+    'efectivo':    ('💵', 'Efectivo'),
+}
+
+def _pago_label(metodo):
+    icon, label = _PAGO_LABELS.get(metodo, ('💳', metodo.capitalize()))
+    return f"{icon} {label}"
+
+def _entrega_label(tipo, direccion=''):
+    if tipo == 'recoger':
+        return '🏪 Retiro en tienda'
+    return f"🛵 Domicilio{f': {direccion}' if direccion else ''}"
+
+
+
+# ── Auth helpers ─────────────────────────────────────────────────────────────
+def _make_token():
+    ts = str(int(_time.time()))
+    sig = _hmac.new(app.secret_key.encode(), ts.encode(), _hashlib.sha256).hexdigest()
+    return f"{ts}.{sig}"
+
+def _check_token(token):
+    try:
+        ts, sig = token.rsplit('.', 1)
+        expected = _hmac.new(app.secret_key.encode(), ts.encode(), _hashlib.sha256).hexdigest()
+        if not _hmac.compare_digest(sig, expected): return False
+        return (int(_time.time()) - int(ts)) < 48 * 3600  # válido 48 h
+    except: return False
+
+@app.route('/api/auth/login', methods=['POST'])
+def api_login():
+    data = request.get_json() or {}
+    password = data.get('password', '')
+    db = get_db()
+    stored = db.execute("SELECT valor FROM configuracion WHERE clave='admin_password'").fetchone()
+    db.close()
+    admin_pw = stored['valor'] if stored else 'admin123'
+    if password != admin_pw:
+        return jsonify({'ok': False, 'error': 'Contraseña incorrecta'}), 401
+    return jsonify({'ok': True, 'token': _make_token()})
+
+@app.route('/api/auth/check', methods=['POST'])
+def api_auth_check():
+    token = (request.get_json() or {}).get('token', '')
+    return jsonify({'ok': _check_token(token)})
 
 
 # ── Setup (one-time seed) ────────────────────────────────────────────────────
@@ -90,7 +143,18 @@ def api_setup_seed():
 # ── Config ────────────────────────────────────────────────────────────────────
 @app.route('/api/config')
 def api_config():
-    return jsonify(TIENDA_CONFIG)
+    return jsonify(get_config())
+
+@app.route('/api/config', methods=['PUT'])
+def api_config_update():
+    data = request.get_json()
+    db = get_db()
+    for clave, valor in data.items():
+        if clave in _CONFIG_DEFAULTS:
+            db.execute("INSERT OR REPLACE INTO configuracion (clave, valor) VALUES (?,?)",
+                       (clave, str(valor).strip()))
+    db.commit(); db.close()
+    return jsonify({'success': True, 'config': get_config()})
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -148,13 +212,72 @@ def api_productos_list():
 def api_productos_catalogo():
     db = get_db()
     data = rows(db.execute("""
-        SELECT p.id, p.nombre, p.precio_venta, p.stock, p.descripcion,
+        SELECT p.id, p.nombre, p.precio_venta, p.stock, p.descripcion, p.imagen, p.marca,
                c.nombre as categoria_nombre, c.id as categoria_id
         FROM productos p LEFT JOIN categorias c ON p.categoria_id=c.id
         ORDER BY p.nombre
     """))
     db.close()
     return jsonify(data)
+
+@app.route('/api/catalogo/es-nuevo')
+def api_es_nuevo():
+    import re as _re
+    tel = _re.sub(r'\D', '', request.args.get('telefono', ''))
+    if len(tel) < 7:
+        return jsonify({'nuevo': True})
+    sufijo = tel[-10:]
+    db = get_db()
+    pedidos = db.execute(
+        "SELECT cliente_telefono FROM pedidos WHERE estado != 'cancelado'"
+    ).fetchall()
+    for p in pedidos:
+        tel_norm = _re.sub(r'\D', '', p['cliente_telefono'] or '')
+        if len(tel_norm) >= 7 and tel_norm[-10:] == sufijo:
+            db.close()
+            return jsonify({'nuevo': False})
+    db.close()
+    return jsonify({'nuevo': True})
+
+@app.route('/api/catalogo/registrar', methods=['POST'])
+def api_catalogo_registrar():
+    import re as _re
+    d = request.get_json() or {}
+    nombre   = d.get('nombre', '').strip()
+    telefono = d.get('telefono', '').strip()
+    if not nombre or not telefono:
+        return jsonify({'error': 'Nombre y teléfono requeridos'}), 400
+    digits = _re.sub(r'\D', '', telefono)
+    db = get_db()
+    if len(digits) >= 7:
+        sufijo = digits[-10:]
+        for c in rows(db.execute("SELECT * FROM clientes WHERE telefono != ''")):
+            c_digits = _re.sub(r'\D', '', c.get('telefono', ''))
+            if len(c_digits) >= 7 and c_digits[-10:] == sufijo:
+                db.close()
+                return jsonify({'cliente': dict(c), 'nuevo': False})
+    cur = db.execute(
+        "INSERT INTO clientes (nombre, telefono, direccion) VALUES (?, ?, ?)",
+        (nombre, telefono, d.get('direccion', ''))
+    )
+    db.commit()
+    c = row(db.execute("SELECT * FROM clientes WHERE id=?", (cur.lastrowid,)))
+    db.close()
+    return jsonify({'cliente': dict(c), 'nuevo': True}), 201
+
+@app.route('/api/productos/scan')
+def api_producto_scan():
+    codigo = request.args.get('codigo', '').strip()
+    if not codigo:
+        return jsonify(None)
+    db = get_db()
+    p = row(db.execute(
+        "SELECT p.*, c.nombre as categoria_nombre FROM productos p "
+        "LEFT JOIN categorias c ON p.categoria_id=c.id WHERE p.codigo_barras=?",
+        (codigo,)
+    ))
+    db.close()
+    return jsonify(p)
 
 @app.route('/api/productos/buscar')
 def api_productos_buscar():
@@ -178,11 +301,11 @@ def api_producto_crear():
     db = get_db()
     try:
         cur = db.execute("""
-            INSERT INTO productos (nombre,descripcion,precio_compra,precio_venta,stock,stock_minimo,categoria_id,codigo_barras)
-            VALUES (?,?,?,?,?,?,?,?)
+            INSERT INTO productos (nombre,descripcion,precio_compra,precio_venta,stock,stock_minimo,categoria_id,codigo_barras,imagen,marca)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
         """, (d['nombre'], d.get('descripcion',''), float(d.get('precio_compra') or 0),
               float(d['precio_venta']), int(d.get('stock') or 0), int(d.get('stock_minimo') or 5),
-              d.get('categoria_id') or None, d.get('codigo_barras','')))
+              d.get('categoria_id') or None, d.get('codigo_barras',''), d.get('imagen',''), d.get('marca','')))
         db.commit()
         pid = cur.lastrowid
         prod = row(db.execute("SELECT p.*, c.nombre as categoria_nombre FROM productos p LEFT JOIN categorias c ON p.categoria_id=c.id WHERE p.id=?", (pid,)))
@@ -199,10 +322,10 @@ def api_producto_editar(id):
     try:
         db.execute("""
             UPDATE productos SET nombre=?,descripcion=?,precio_compra=?,precio_venta=?,
-            stock=?,stock_minimo=?,categoria_id=?,codigo_barras=? WHERE id=?
+            stock=?,stock_minimo=?,categoria_id=?,codigo_barras=?,imagen=?,marca=? WHERE id=?
         """, (d['nombre'], d.get('descripcion',''), float(d.get('precio_compra') or 0),
               float(d['precio_venta']), int(d.get('stock') or 0), int(d.get('stock_minimo') or 5),
-              d.get('categoria_id') or None, d.get('codigo_barras',''), id))
+              d.get('categoria_id') or None, d.get('codigo_barras',''), d.get('imagen',''), d.get('marca',''), id))
         db.commit()
         prod = row(db.execute("SELECT p.*, c.nombre as categoria_nombre FROM productos p LEFT JOIN categorias c ON p.categoria_id=c.id WHERE p.id=?", (id,)))
         db.close()
@@ -214,9 +337,18 @@ def api_producto_editar(id):
 @app.route('/api/productos/<int:id>', methods=['DELETE'])
 def api_producto_eliminar(id):
     db = get_db()
-    db.execute("DELETE FROM productos WHERE id=?", (id,))
-    db.commit(); db.close()
-    return jsonify({'ok': True})
+    try:
+        en_ventas  = db.execute("SELECT COUNT(*) FROM detalle_ventas  WHERE producto_id=?", (id,)).fetchone()[0]
+        en_pedidos = db.execute("SELECT COUNT(*) FROM detalle_pedidos WHERE producto_id=?", (id,)).fetchone()[0]
+        if en_ventas or en_pedidos:
+            db.close()
+            return jsonify({'error': 'Este producto tiene ventas o pedidos registrados y no puede eliminarse. Pon su stock en 0 para ocultarlo del catálogo.'}), 409
+        db.execute("DELETE FROM productos WHERE id=?", (id,))
+        db.commit(); db.close()
+        return jsonify({'ok': True})
+    except Exception as e:
+        db.rollback(); db.close()
+        return jsonify({'error': str(e)}), 400
 
 
 # ── Categorias ────────────────────────────────────────────────────────────────
@@ -243,6 +375,22 @@ def api_categoria_crear():
         cat = row(db.execute("SELECT c.*, COUNT(p.id) as total_productos FROM categorias c LEFT JOIN productos p ON c.id=p.categoria_id WHERE c.id=? GROUP BY c.id", (cur.lastrowid,)))
         db.close()
         return jsonify(cat), 201
+    except Exception as e:
+        db.rollback(); db.close()
+        return jsonify({'error': 'Esa categoría ya existe'}), 409
+
+@app.route('/api/categorias/<int:id>', methods=['PUT'])
+def api_categoria_editar(id):
+    nombre = (request.get_json() or {}).get('nombre', '').strip()
+    if not nombre:
+        return jsonify({'error': 'Nombre requerido'}), 400
+    db = get_db()
+    try:
+        db.execute("UPDATE categorias SET nombre=? WHERE id=?", (nombre, id))
+        db.commit()
+        cat = row(db.execute("SELECT c.*, COUNT(p.id) as total_productos FROM categorias c LEFT JOIN productos p ON c.id=p.categoria_id WHERE c.id=? GROUP BY c.id", (id,)))
+        db.close()
+        return jsonify(cat)
     except Exception as e:
         db.rollback(); db.close()
         return jsonify({'error': 'Esa categoría ya existe'}), 409
@@ -349,6 +497,39 @@ def api_cliente_eliminar(id):
     db.commit(); db.close()
     return jsonify({'ok': True})
 
+@app.route('/api/suscriptores')
+def api_suscriptores():
+    """Clientes únicos que han hecho al menos un pedido (para difusión WhatsApp)."""
+    db = get_db()
+    # Clientes de pedidos WhatsApp
+    wa = rows(db.execute("""
+        SELECT cliente_nombre AS nombre, cliente_telefono AS telefono,
+               COUNT(*) AS total_pedidos, MAX(created_at) AS ultimo_pedido,
+               'whatsapp' AS origen
+        FROM pedidos
+        WHERE estado != 'cancelado' AND cliente_telefono != ''
+        GROUP BY cliente_telefono
+    """))
+    # Clientes POS con teléfono
+    pos = rows(db.execute("""
+        SELECT c.nombre, c.telefono,
+               COUNT(v.id) AS total_pedidos, MAX(v.created_at) AS ultimo_pedido,
+               'pos' AS origen
+        FROM clientes c
+        JOIN ventas v ON v.cliente_id = c.id
+        WHERE c.telefono != ''
+        GROUP BY c.telefono
+    """))
+    db.close()
+    # Unificar por últimos 10 dígitos del teléfono
+    seen = {}
+    for s in [*wa, *pos]:
+        digits = ''.join(c for c in (s['telefono'] or '') if c.isdigit())[-10:]
+        if digits and digits not in seen:
+            seen[digits] = dict(s)
+    result = sorted(seen.values(), key=lambda x: x['ultimo_pedido'] or '', reverse=True)
+    return jsonify(result)
+
 
 # ── Caja ──────────────────────────────────────────────────────────────────────
 @app.route('/api/caja')
@@ -435,11 +616,14 @@ def api_reportes():
 def api_catalogo_pedido():
     data = request.get_json()
     db   = get_db()
+    tipo_entrega = data.get('tipo_entrega', 'domicilio')
+    metodo_pago  = data.get('metodo_pago', 'efectivo')
     try:
         cur = db.execute("""
-            INSERT INTO pedidos (cliente_nombre,cliente_telefono,cliente_direccion,total,notas)
-            VALUES (?,?,?,?,?)
-        """, (data['nombre'], data['telefono'], data.get('direccion',''), data['total'], data.get('notas','')))
+            INSERT INTO pedidos (cliente_nombre,cliente_telefono,cliente_direccion,total,notas,tipo_entrega,metodo_pago)
+            VALUES (?,?,?,?,?,?,?)
+        """, (data['nombre'], data['telefono'], data.get('direccion',''), data['total'],
+              data.get('notas',''), tipo_entrega, metodo_pago))
         pid = cur.lastrowid
         for item in data['items']:
             db.execute("""
@@ -448,18 +632,25 @@ def api_catalogo_pedido():
             """, (pid, item['producto_id'], item['cantidad'], item['precio_unitario'], item['subtotal']))
         db.commit()
 
-        # Generar link WhatsApp
-        pedido_db = row(db.execute("SELECT * FROM pedidos WHERE id=?", (pid,)))
-        items_db  = rows(db.execute("SELECT dp.*,p.nombre as producto_nombre FROM detalle_pedidos dp JOIN productos p ON dp.producto_id=p.id WHERE dp.pedido_id=?", (pid,)))
-        lineas = '\n'.join([f"• {i['producto_nombre']} x{i['cantidad']} = ${i['subtotal']:,.0f}" for i in items_db])
-        pago_lines = _pago_msg()
-        msg = (f"Hola *{TIENDA_CONFIG['nombre']}*! 🛒\n\nQuiero confirmar mi pedido:\n\n"
-               f"*Pedido #{pid}*\n{lineas}\n\n💰 *TOTAL: ${data['total']:,.0f}*\n\n"
-               f"📋 *Mis datos:*\nNombre: {data['nombre']}\nTel: {data['telefono']}\n"
-               + (f"Dirección: {data.get('direccion','')}\n" if data.get('direccion') else "")
-               + (f"Notas: {data.get('notas','')}\n" if data.get('notas') else "")
-               + f"\n{pago_lines}\n\n_Ahora voy a enviar el comprobante de pago_ 📸")
-        wa_link = f"https://wa.me/{TIENDA_CONFIG['whatsapp']}?text={urllib.parse.quote(msg)}"
+        cfg      = get_config()
+        items_db = rows(db.execute("SELECT dp.*,p.nombre as producto_nombre FROM detalle_pedidos dp JOIN productos p ON dp.producto_id=p.id WHERE dp.pedido_id=?", (pid,)))
+        lineas   = '\n'.join([f"  • {i['producto_nombre']} x{i['cantidad']} — ${i['subtotal']:,.0f}" for i in items_db])
+
+        entrega_txt = _entrega_label(tipo_entrega, data.get('direccion',''))
+        pago_txt    = _pago_label(metodo_pago)
+        comprobante_txt = '\n📸 _Ahora te envío el comprobante de pago_' if metodo_pago != 'efectivo' else ''
+
+        msg = (
+            f"🛒 *PEDIDO #{pid}* — {cfg['nombre']}\n\n"
+            f"👤 *{data['nombre']}*  |  📱 {data['telefono']}\n"
+            f"{entrega_txt}\n\n"
+            f"*Productos:*\n{lineas}\n\n"
+            f"💰 *TOTAL: ${data['total']:,.0f}*\n"
+            f"{pago_txt}"
+            + (f"\n📝 {data['notas']}" if data.get('notas') else '')
+            + comprobante_txt
+        )
+        wa_link = f"https://wa.me/{cfg['whatsapp']}?text={urllib.parse.quote(msg)}"
 
         db.close()
         return jsonify({'success': True, 'pedido_id': pid, 'wa_link': wa_link})
@@ -476,18 +667,28 @@ def api_catalogo_pedido_detalle(id):
     if not pedido:
         db.close(); return jsonify({'error': 'No encontrado'}), 404
 
-    lineas = '\n'.join([f"• {i['producto_nombre']} x{i['cantidad']} = ${i['subtotal']:,.0f}" for i in items])
-    pago_lines = _pago_msg()
-    msg = (f"Hola *{TIENDA_CONFIG['nombre']}*! 🛒\n\nQuiero confirmar mi pedido:\n\n"
-           f"*Pedido #{id}*\n{lineas}\n\n💰 *TOTAL: ${pedido['total']:,.0f}*\n\n"
-           f"📋 *Mis datos:*\nNombre: {pedido['cliente_nombre']}\nTel: {pedido['cliente_telefono']}\n"
-           + (f"Dirección: {pedido['cliente_direccion']}\n" if pedido.get('cliente_direccion') else "")
-           + (f"Notas: {pedido['notas']}\n" if pedido.get('notas') else "")
-           + f"\n{pago_lines}\n\n_Ahora voy a enviar el comprobante de pago_ 📸")
-    wa_link = f"https://wa.me/{TIENDA_CONFIG['whatsapp']}?text={urllib.parse.quote(msg)}"
+    cfg          = get_config()
+    tipo_entrega = pedido.get('tipo_entrega', 'domicilio')
+    metodo_pago  = pedido.get('metodo_pago', 'efectivo')
+    lineas       = '\n'.join([f"  • {i['producto_nombre']} x{i['cantidad']} — ${i['subtotal']:,.0f}" for i in items])
+    entrega_txt  = _entrega_label(tipo_entrega, pedido.get('cliente_direccion',''))
+    pago_txt     = _pago_label(metodo_pago)
+    comprobante_txt = '\n📸 _Ahora te envío el comprobante de pago_' if metodo_pago != 'efectivo' else ''
+
+    msg = (
+        f"🛒 *PEDIDO #{id}* — {cfg['nombre']}\n\n"
+        f"👤 *{pedido['cliente_nombre']}*  |  📱 {pedido['cliente_telefono']}\n"
+        f"{entrega_txt}\n\n"
+        f"*Productos:*\n{lineas}\n\n"
+        f"💰 *TOTAL: ${pedido['total']:,.0f}*\n"
+        f"{pago_txt}"
+        + (f"\n📝 {pedido['notas']}" if pedido.get('notas') else '')
+        + comprobante_txt
+    )
+    wa_link = f"https://wa.me/{cfg['whatsapp']}?text={urllib.parse.quote(msg)}"
 
     db.close()
-    return jsonify({'pedido': pedido, 'items': items, 'wa_link': wa_link, 'config': TIENDA_CONFIG})
+    return jsonify({'pedido': pedido, 'items': items, 'wa_link': wa_link, 'config': cfg})
 
 
 # ── Pedidos (admin) ───────────────────────────────────────────────────────────
@@ -495,15 +696,25 @@ def api_catalogo_pedido_detalle(id):
 def api_pedidos():
     db = get_db()
     estado = request.args.get('estado', 'pendiente')
-    lista  = rows(db.execute("""
+    # Tab "en_camino" cubre tanto en_camino como listo (pickup)
+    if estado == 'en_camino':
+        where_clause = "p.estado IN ('en_camino','listo')"
+        params = []
+    else:
+        where_clause = "p.estado=?"
+        params = [estado]
+    lista = rows(db.execute(f"""
         SELECT p.id, p.cliente_nombre, p.cliente_telefono, p.cliente_direccion,
                p.total, p.estado, p.notas, p.created_at, p.pago_verificado,
+               p.tipo_entrega, p.metodo_pago,
                CASE WHEN p.comprobante_b64 != '' AND p.comprobante_b64 IS NOT NULL THEN 1 ELSE 0 END as tiene_comprobante,
                COUNT(dp.id) as num_items
         FROM pedidos p LEFT JOIN detalle_pedidos dp ON p.id=dp.pedido_id
-        WHERE p.estado=? GROUP BY p.id ORDER BY p.created_at DESC
-    """, (estado,)))
-    conteos = {r['estado']: r['n'] for r in rows(db.execute("SELECT estado, COUNT(*) n FROM pedidos GROUP BY estado"))}
+        WHERE {where_clause} GROUP BY p.id ORDER BY p.created_at DESC
+    """, params))
+    conteos_raw = {r['estado']: r['n'] for r in rows(db.execute("SELECT estado, COUNT(*) n FROM pedidos GROUP BY estado"))}
+    conteos = dict(conteos_raw)
+    conteos['en_camino'] = conteos_raw.get('en_camino', 0) + conteos_raw.get('listo', 0)
     db.close()
     return jsonify({'pedidos': lista, 'conteos': conteos})
 
@@ -532,9 +743,22 @@ def api_pedido_confirmar(id):
             db.execute("UPDATE productos SET stock=stock-? WHERE id=?", (i['cantidad'], i['producto_id']))
         db.execute("UPDATE pedidos SET estado='confirmado',venta_id=? WHERE id=?", (vid, id))
 
-        msg = (f"Hola {pedido['cliente_nombre']}! 👋\n\n"
-               f"Tu pedido *#{id}* fue *confirmado* en {TIENDA_CONFIG['nombre']} ✅\n\n"
-               f"💰 Total: ${pedido['total']:,.0f}\n\nGracias por tu compra! 🙏")
+        cfg         = get_config()
+        items_conf  = rows(db.execute("SELECT dp.*,p.nombre as producto_nombre FROM detalle_pedidos dp JOIN productos p ON dp.producto_id=p.id WHERE dp.pedido_id=?", (id,)))
+        lineas_conf = '\n'.join([f"  • {i['producto_nombre']} x{i['cantidad']} — ${i['subtotal']:,.0f}" for i in items_conf])
+        factura_url = f"{cfg.get('url_tienda','').rstrip('/')}/factura/{id}"
+        nombre_corto = pedido['cliente_nombre'].split()[0]
+        entrega_line = _entrega_label(pedido.get('tipo_entrega','domicilio'), pedido.get('cliente_direccion',''))
+
+        msg = (
+            f"✅ *¡Pedido #{id} confirmado!*\n\n"
+            f"Hola *{nombre_corto}* 👋 Tu pedido en *{cfg['nombre']}* está confirmado y siendo preparado.\n\n"
+            f"*Tu pedido:*\n{lineas_conf}\n\n"
+            f"💰 *Total: ${pedido['total']:,.0f}*\n"
+            f"{entrega_line}\n\n"
+            f"📄 *Tu factura:*\n{factura_url}\n\n"
+            f"¡Gracias por tu compra! 🙏 *{cfg['nombre']}*"
+        )
         wa = None
         if pedido.get('cliente_telefono'):
             tel = pedido['cliente_telefono'].replace(' ','').replace('+','')
@@ -552,6 +776,79 @@ def api_pedido_cancelar(id):
     db.execute("UPDATE pedidos SET estado='cancelado' WHERE id=?", (id,))
     db.commit(); db.close()
     return jsonify({'success': True})
+
+@app.route('/api/catalogo/pedido/<int:id>/cancelar', methods=['POST'])
+def api_catalogo_pedido_cancelar(id):
+    """El cliente cancela su propio pedido (solo si aún no salió)."""
+    db = get_db()
+    pedido = row(db.execute("SELECT * FROM pedidos WHERE id=?", (id,)))
+    if not pedido:
+        db.close(); return jsonify({'error': 'Pedido no encontrado'}), 404
+    estado = pedido.get('estado', 'pendiente')
+    if estado in ('en_camino', 'listo', 'entregado'):
+        db.close()
+        return jsonify({'error': 'Tu pedido ya está en proceso de entrega y no se puede cancelar. Comunícate con la tienda.'}), 409
+    if estado == 'cancelado':
+        db.close()
+        return jsonify({'success': True, 'nuevo_estado': 'cancelado'})
+    db.execute("UPDATE pedidos SET estado='cancelado' WHERE id=?", (id,))
+    cfg = get_config()
+    wa = None
+    if cfg.get('whatsapp'):
+        nombre_corto = pedido['cliente_nombre'].split()[0]
+        msg = (
+            f"❌ *Pedido #{id} cancelado*\n\n"
+            f"Hola, soy *{nombre_corto}*. Acabo de cancelar mi pedido #{id} desde el catálogo.\n\n"
+            f"Total que era: *${pedido['total']:,.0f}*"
+        )
+        tel = cfg['whatsapp'].replace(' ', '').replace('+', '')
+        wa = f"https://wa.me/{tel}?text={urllib.parse.quote(msg)}"
+    db.commit(); db.close()
+    return jsonify({'success': True, 'nuevo_estado': 'cancelado', 'wa_tienda': wa})
+
+@app.route('/api/pedidos/<int:id>/avanzar', methods=['POST'])
+def api_pedido_avanzar(id):
+    db = get_db()
+    pedido = row(db.execute("SELECT * FROM pedidos WHERE id=?", (id,)))
+    if not pedido:
+        db.close(); return jsonify({'error': 'No encontrado'}), 404
+    estado_actual = pedido.get('estado', 'pendiente')
+    tipo_entrega  = pedido.get('tipo_entrega', 'domicilio')
+    siguiente = {
+        'confirmado': 'en_camino' if tipo_entrega == 'domicilio' else 'listo',
+        'en_camino':  'entregado',
+        'listo':      'entregado',
+    }.get(estado_actual)
+    if not siguiente:
+        db.close(); return jsonify({'error': f'No se puede avanzar desde {estado_actual}'}), 400
+    db.execute("UPDATE pedidos SET estado=? WHERE id=?", (siguiente, id))
+    cfg = get_config()
+    nombre_corto = pedido['cliente_nombre'].split()[0]
+    msgs = {
+        'en_camino': (
+            f"🛵 *¡Tu pedido #{id} ya salió!*\n\n"
+            f"Hola *{nombre_corto}* 👋 Tu pedido está en camino a tu dirección.\n\n"
+            f"Prepara *${pedido['total']:,.0f}* para el pago al recibir.\n\n"
+            f"¡Gracias por comprar en *{cfg['nombre']}*! 🙏"
+        ),
+        'listo': (
+            f"🏪 *¡Tu pedido #{id} está listo!*\n\n"
+            f"Hola *{nombre_corto}* 👋 Tu pedido ya está listo para recoger.\n\n"
+            f"Ven cuando quieras. Total: *${pedido['total']:,.0f}*\n\n"
+            f"¡Te esperamos en *{cfg['nombre']}*! 🙏"
+        ),
+        'entregado': (
+            f"✅ *¡Pedido #{id} entregado!*\n\n"
+            f"Hola *{nombre_corto}* 👋 Tu pedido fue entregado con éxito.\n\n"
+            f"¡Gracias por comprar en *{cfg['nombre']}*! Esperamos verte pronto ❤️"
+        ),
+    }
+    wa = None
+    if pedido.get('cliente_telefono') and siguiente in msgs:
+        tel = pedido['cliente_telefono'].replace(' ','').replace('+','')
+        wa  = f"https://wa.me/{tel}?text={urllib.parse.quote(msgs[siguiente])}"
+    db.commit(); db.close()
+    return jsonify({'success': True, 'nuevo_estado': siguiente, 'wa_cliente': wa})
 
 @app.route('/api/pedidos/<int:id>/comprobante', methods=['POST'])
 def api_pedido_comprobante(id):
@@ -642,7 +939,98 @@ def api_factura(id):
     items  = rows(db.execute("SELECT dp.*,p.nombre as producto_nombre FROM detalle_pedidos dp JOIN productos p ON dp.producto_id=p.id WHERE dp.pedido_id=?", (id,)))
     db.close()
     if not pedido: return jsonify({'error': 'No encontrado'}), 404
-    return jsonify({'pedido': pedido, 'items': items, 'config': TIENDA_CONFIG})
+    return jsonify({'pedido': pedido, 'items': items, 'config': get_config()})
+
+
+@app.route('/api/ventas/<int:id>/recibo')
+def api_venta_recibo(id):
+    db    = get_db()
+    venta = row(db.execute("""
+        SELECT v.*, COALESCE(c.nombre,'Cliente General') as cliente_nombre
+        FROM ventas v LEFT JOIN clientes c ON v.cliente_id=c.id WHERE v.id=?
+    """, (id,)))
+    items = rows(db.execute("""
+        SELECT dv.*, p.nombre as producto_nombre
+        FROM detalle_ventas dv JOIN productos p ON dv.producto_id=p.id WHERE dv.venta_id=?
+    """, (id,)))
+    db.close()
+    if not venta: return jsonify({'error': 'No encontrado'}), 404
+    return jsonify({'venta': venta, 'items': items, 'config': get_config()})
+
+
+# ── Promociones ───────────────────────────────────────────────────────────────
+@app.route('/api/promociones')
+def api_promociones():
+    db = get_db()
+    admin = request.args.get('admin') == '1'
+    where = '' if admin else 'WHERE activo=1'
+    data = rows(db.execute(f'SELECT * FROM promociones {where} ORDER BY orden, id'))
+    db.close()
+    return jsonify(data)
+
+@app.route('/api/promociones', methods=['POST'])
+def api_promocion_crear():
+    d = request.get_json()
+    db = get_db()
+    cur = db.execute(
+        'INSERT INTO promociones (titulo,descripcion,color_fondo,color_texto,imagen,activo,orden) VALUES (?,?,?,?,?,?,?)',
+        (d.get('titulo',''), d.get('descripcion',''), d.get('color_fondo','#1e40af'),
+         d.get('color_texto','#ffffff'), d.get('imagen',''), int(d.get('activo',1)), int(d.get('orden',0)))
+    )
+    db.commit()
+    p = row(db.execute('SELECT * FROM promociones WHERE id=?', (cur.lastrowid,)))
+    db.close()
+    return jsonify(p), 201
+
+@app.route('/api/promociones/<int:pid>', methods=['PUT'])
+def api_promocion_editar(pid):
+    d = request.get_json()
+    db = get_db()
+    db.execute(
+        'UPDATE promociones SET titulo=?,descripcion=?,color_fondo=?,color_texto=?,imagen=?,activo=?,orden=? WHERE id=?',
+        (d.get('titulo',''), d.get('descripcion',''), d.get('color_fondo','#1e40af'),
+         d.get('color_texto','#ffffff'), d.get('imagen',''), int(d.get('activo',1)), int(d.get('orden',0)), pid)
+    )
+    db.commit()
+    p = row(db.execute('SELECT * FROM promociones WHERE id=?', (pid,)))
+    db.close()
+    return jsonify(p)
+
+@app.route('/api/promociones/<int:pid>', methods=['DELETE'])
+def api_promocion_eliminar(pid):
+    db = get_db()
+    db.execute('DELETE FROM promociones WHERE id=?', (pid,))
+    db.commit(); db.close()
+    return jsonify({'ok': True})
+
+
+@app.route('/api/reset-datos', methods=['DELETE'])
+def api_reset_datos():
+    body = request.get_json(silent=True, force=True) or {}
+    if body.get('confirmar') != 'BORRAR-TODO':
+        return jsonify({'error': 'Confirmación incorrecta'}), 400
+    db = get_db()
+    db.executescript("""
+        PRAGMA foreign_keys = OFF;
+        DELETE FROM detalle_ventas;
+        DELETE FROM detalle_pedidos;
+        DELETE FROM movimientos_caja;
+        DELETE FROM ventas;
+        DELETE FROM pedidos;
+        DELETE FROM caja;
+        DELETE FROM clientes;
+        DELETE FROM productos;
+        DELETE FROM categorias;
+        DELETE FROM sqlite_sequence WHERE name IN
+            ('ventas','detalle_ventas','pedidos','detalle_pedidos',
+             'movimientos_caja','caja','clientes','productos','categorias');
+        INSERT INTO categorias (nombre) VALUES
+            ('Bebidas'),('Lácteos'),('Panadería'),('Aseo'),
+            ('Granos'),('Snacks'),('Carnes'),('Otros');
+        PRAGMA foreign_keys = ON;
+    """)
+    db.commit(); db.close()
+    return jsonify({'success': True})
 
 
 if __name__ == '__main__':

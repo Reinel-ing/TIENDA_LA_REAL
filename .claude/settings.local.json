@@ -4,7 +4,9 @@
       "PowerShell(Get-NetTCPConnection -LocalPort 5000 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }; Start-Sleep -Milliseconds 500; netstat -ano | findstr \":5000\")",
       "PowerShell(taskkill /PID 2504 /F)",
       "PowerShell(netstat -ano)",
-      "mcp__Claude_Preview__preview_start"
+      "mcp__Claude_Preview__preview_start",
+      "Bash(python pa_finish.py)",
+      "Bash(python -c ' *)"
     ]
   }
 }

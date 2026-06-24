@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import api, { cop } from '../api'
+import useAutoRefresh from '../hooks/useAutoRefresh'
+import LiveBadge from '../components/LiveBadge'
 
 const HOY = new Date().toISOString().slice(0, 10)
 const HACE7 = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10)
@@ -22,6 +24,7 @@ export default function Transferencias() {
     api.get('/transferencias', { params: { desde, hasta } }).then(r => setData(r.data))
 
   useEffect(() => { load() }, [desde, hasta])
+  const lastUpdated = useAutoRefresh(load, 30000)
 
   const filas = !data ? [] :
     tab === 'ventas'  ? data.ventas :
@@ -35,6 +38,7 @@ export default function Transferencias() {
     <>
       <div className="topbar">
         <h4><i className="fa-solid fa-money-bill-transfer me-2" />Transferencias digitales</h4>
+        <LiveBadge lastUpdated={lastUpdated} />
       </div>
 
       <div className="page-body">

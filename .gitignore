@@ -12,3 +12,9 @@ frontend/dist/
 *.pyc
 __pycache__/
 .env
+
+# Scripts de despliegue con credenciales de PythonAnywhere (NO subir)
+deploy_react.py
+pa_finish.py
+upload_backend.py
+upload_dist.py

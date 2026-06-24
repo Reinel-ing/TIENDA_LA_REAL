@@ -98,10 +98,36 @@ def init_db():
         );
     """)
 
-    # Migración: columnas de pago (no falla si ya existen)
+    # Tabla de configuración editable desde el panel
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS configuracion (
+            clave TEXT PRIMARY KEY,
+            valor TEXT DEFAULT ''
+        )
+    """)
+
+    # Tabla de promociones para el carrusel del catálogo
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS promociones (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            titulo      TEXT NOT NULL DEFAULT '',
+            descripcion TEXT DEFAULT '',
+            color_fondo TEXT DEFAULT '#1e40af',
+            color_texto TEXT DEFAULT '#ffffff',
+            imagen      TEXT DEFAULT '',
+            activo      INTEGER DEFAULT 1,
+            orden       INTEGER DEFAULT 0
+        )
+    """)
+
+    # Migraciones (no fallan si ya existen)
     for col_sql in [
         "ALTER TABLE pedidos ADD COLUMN comprobante_b64 TEXT DEFAULT ''",
         "ALTER TABLE pedidos ADD COLUMN pago_verificado INTEGER DEFAULT 0",
+        "ALTER TABLE productos ADD COLUMN imagen TEXT DEFAULT ''",
+        "ALTER TABLE productos ADD COLUMN marca TEXT DEFAULT ''",
+        "ALTER TABLE pedidos ADD COLUMN tipo_entrega TEXT DEFAULT 'domicilio'",
+        "ALTER TABLE pedidos ADD COLUMN metodo_pago TEXT DEFAULT 'efectivo'",
     ]:
         try: conn.execute(col_sql)
         except: pass

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import api, { cop } from '../api'
+import useAutoRefresh from '../hooks/useAutoRefresh'
+import LiveBadge from '../components/LiveBadge'
 
 export default function VentasHistorial() {
   const today = new Date().toISOString().slice(0, 10)
@@ -9,11 +11,13 @@ export default function VentasHistorial() {
 
   const load = () => api.get('/ventas', { params: { desde, hasta } }).then(r => setData(r.data))
   useEffect(() => { load() }, [desde, hasta])
+  const lastUpdated = useAutoRefresh(load, 30000)
 
   return (
     <>
       <div className="topbar">
         <h4><i className="fa-solid fa-clock-rotate-left me-2" />Historial de ventas</h4>
+        <LiveBadge lastUpdated={lastUpdated} />
       </div>
       <div className="page-body">
         <div className="d-flex gap-2 mb-3 align-items-center flex-wrap">
